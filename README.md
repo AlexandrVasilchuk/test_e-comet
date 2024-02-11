@@ -82,7 +82,7 @@ yc serverless function list
 - Запустите docker-compose.yml файл
 
 ```bash
-docker compose up -d
+docker-compose up -d --build
 ```
 
 - Запустите триггер парсера через файл run_timer.sh

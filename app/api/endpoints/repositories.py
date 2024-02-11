@@ -2,7 +2,7 @@ from http import HTTPStatus
 from typing import Optional
 
 from asyncpg.connection import Connection
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.services import GITHUB_ERROR, get_repository_activity
 from app.core.db import get_db_async_connection
@@ -14,10 +14,23 @@ router = APIRouter()
 
 @router.get("/repos/top100", response_model=list[RepositoryDB])
 async def get_top_repositories(
+    sort_by: str = Query(
+        "stars",
+        description="Field to sort by",
+        regex=r"^(stars|watchers|forks|open_issues)$",
+    ),
+    order: str = Query(
+        "desc", description="Sort order", regex=r"^(asc|desc)$"
+    ),
     connection: Connection = Depends(get_db_async_connection),
 ):
     rows = await connection.fetch(
-        "SELECT * FROM repositories ORDER BY stars DESC LIMIT 100"
+        f"""
+        SELECT *
+        FROM repositories
+        ORDER BY {sort_by} {order.upper()}
+        LIMIT 100
+        """
     )
     return [
         RepositoryDB(
@@ -41,5 +54,5 @@ async def get_activity(
     except Exception as e:
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail=GITHUB_ERROR.format(e)
+            detail=GITHUB_ERROR.format(e),
         )
