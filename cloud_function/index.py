@@ -1,13 +1,12 @@
 import logging
+import os
 import random
+import re
+from http import HTTPStatus
 
 import asyncpg
-import os
-import re
-
 from aiohttp import ClientSession
 from asyncpg import Connection
-from http import HTTPStatus
 
 
 async def create_connection() -> Connection:
@@ -194,11 +193,13 @@ async def parse_repositories_info(
 
 
 async def main(event, context):
-    url = "https://api.github.com/repositories?since={repo_id}".format(repo_id=random.randint(1, 10**6))
+    url = "https://api.github.com/repositories?since={repo_id}".format(
+        repo_id=random.randint(1, 10**6)
+    )
     headers = {
         "Accept": "application/vnd.github.v3+json",
-         "Authorization": f"token {os.getenv('TOKEN')}"
-         }
+        "Authorization": f"token {os.getenv('TOKEN')}",
+    }
     try:
         db_connection = await create_connection()
     except asyncpg.PostgresConnectionError:
@@ -211,7 +212,7 @@ async def main(event, context):
         async with ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 await parse_repositories_info(
-                     await response.json(), db_connection, session
+                    await response.json(), db_connection, session
                 )
     except Exception as e:
         logging.exception(e)

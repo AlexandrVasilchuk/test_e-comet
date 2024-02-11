@@ -1,1 +1,1 @@
-from app.api.endpoints.repositories import router as repository_router
+from app.api.endpoints.repositories import router as repository_router  # noqa

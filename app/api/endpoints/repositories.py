@@ -1,14 +1,13 @@
 from http import HTTPStatus
 from typing import Optional
 
+from asyncpg.connection import Connection
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.services import get_repository_activity, GITHUB_ERROR
+from app.api.services import GITHUB_ERROR, get_repository_activity
 from app.core.db import get_db_async_connection
-from asyncpg.connection import Connection
-
-from app.schemas.repository import RepositoryDB
 from app.schemas.activity import RepositoryActivity
+from app.schemas.repository import RepositoryDB
 
 router = APIRouter()
 
@@ -42,5 +41,5 @@ async def get_activity(
     except Exception as e:
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail=GITHUB_ERROR
+            detail=GITHUB_ERROR.format(e)
         )

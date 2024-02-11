@@ -8,8 +8,7 @@ from fastapi import HTTPException
 
 from app.schemas.activity import RepositoryActivity
 
-
-GITHUB_ERROR = "Ошибка со стороны GitHub API"
+GITHUB_ERROR = "Ошибка со стороны GitHub API. Подробнее {}"
 
 
 async def get_repository_activity(
