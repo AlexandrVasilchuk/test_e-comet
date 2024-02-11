@@ -1,7 +1,9 @@
 import logging
+import random
 
 import asyncpg
 import os
+import re
 
 from aiohttp import ClientSession
 from asyncpg import Connection
@@ -192,39 +194,31 @@ async def parse_repositories_info(
 
 
 async def main(event, context):
-    url = "https://api.github.com/repositories"
-    headers = {"Accept": "application/vnd.github.v3+json"}
-    counter = 0
+    url = "https://api.github.com/repositories?since={repo_id}".format(repo_id=random.randint(1, 10**6))
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+         "Authorization": f"token {os.getenv('TOKEN')}"
+         }
     try:
         db_connection = await create_connection()
     except asyncpg.PostgresConnectionError:
         return {
             "statusCode": HTTPStatus.INTERNAL_SERVER_ERROR,
-            "body": "Ошибка подключения к базу",
+            "body": "Ошибка подключения к базе",
         }
+
     try:
         async with ClientSession() as session:
-            while url is not None and counter < 5:
-                async with session.get(
-                    str(url), headers=headers, ssl=False
-                ) as response:
-                    counter += 1
-                    link_info = response.headers.get("link")
-
-                    await parse_repositories_info(
-                        await response.json(), db_connection, session
-                    )
-
-                    if link_info:
-                        url = link_info.split(";", maxsplit=1)[0].strip("<>")
-                    else:
-                        url = None
+            async with session.get(url, headers=headers) as response:
+                await parse_repositories_info(
+                     await response.json(), db_connection, session
+                )
     except Exception as e:
-        logging.error("При работе парсера произошла ошибка. {}".format(e))
+        logging.exception(e)
 
     await update_positions(db_connection)
     await db_connection.close()
     return {
         "statusCode": HTTPStatus.OK,
-        "body": "Данный успешно сохранены в базу!",
+        "body": "Данные успешно сохранены в базу!",
     }
