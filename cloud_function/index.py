@@ -1,22 +1,41 @@
 import logging
 import os
 import random
-import re
+from collections import namedtuple
 from http import HTTPStatus
 
-import asyncpg
-from aiohttp import ClientSession
-from asyncpg import Connection
+import requests
+import psycopg2
+from psycopg2 import pool
+from psycopg2.extensions import connection
+
+MIN_CONNECTIONS_COUNT = 1
+MAX_CONNECTIONS_COUNT = 10
+Repository = namedtuple(
+    "Repository",
+    [
+        "id",
+        "repo",
+        "owner",
+        "position_cur",
+        "position_prev",
+        "stars",
+        "watchers",
+        "forks",
+        "open_issues",
+        "language",
+    ],
+)
 
 
-async def create_connection() -> Connection:
+def create_pool() -> pool.SimpleConnectionPool:
     """
-    Асинхронная функция для создания соединения с базой данных.
+    Создает пул соединений с базой данных.
 
     Переменные для подключения должны быть указаны в переменных окружения.
 
     Returns:
-        Connection: Объект соединения с базой данных.
+        pool.SimpleConnectionPool: Объект пула соединений с базой данных.
     """
 
     user, password, database, host, port = (
@@ -26,21 +45,24 @@ async def create_connection() -> Connection:
         os.getenv("DB_HOST"),
         os.getenv("DB_PORT"),
     )
-    return await asyncpg.connect(
-        user=user, password=password, database=database, host=host, port=port
+    return pool.SimpleConnectionPool(
+        MIN_CONNECTIONS_COUNT,
+        MAX_CONNECTIONS_COUNT,
+        user=user,
+        password=password,
+        database=database,
+        host=host,
+        port=port,
     )
 
 
-async def request_detail(
-    owner: str, repo_name: str, session: ClientSession
-) -> dict:
+def request_detail(owner: str, repo_name: str) -> dict:
     """
     Функция запроса к API GitHub для получения информации о репозитории.
 
     Args:
         owner: str - Владелец репозитория.
         repo_name: str - Название репозитория.
-        session: ClientSession - Сессия для выполнения HTTP-запросов.
 
     Returns:
         dict: Информация о репозитории.
@@ -48,16 +70,14 @@ async def request_detail(
 
     repo_info_url = "https://api.github.com/repos/{owner}/{repo_name}"
     headers = {"Accept": "application/vnd.github.v3+json"}
-    async with session.get(
+    response = requests.get(
         repo_info_url.format(owner=owner, repo_name=repo_name),
         headers=headers,
-        ssl=False,
-    ) as response:
-        repository_info = await response.json()
-        return await parse_detail(repository_info)
+    )
+    return parse_detail(response.json())
 
 
-async def parse_detail(repository: dict) -> dict:
+def parse_detail(repository: dict) -> dict:
     result = {
         "full_name": repository.get("full_name"),
         "stars": repository.get("stargazers_count"),
@@ -69,8 +89,8 @@ async def parse_detail(repository: dict) -> dict:
     return result
 
 
-async def add_repository_to_database(
-    db_connection: Connection,
+def add_repository_to_database(
+    db_connection: connection,
     full_name: str,
     owner: str,
     stars: int,
@@ -83,142 +103,135 @@ async def add_repository_to_database(
     Функция для добавления или обновления информации о репозитории в БД.
 
     Args:
-        db_connection (Connection): Соединение с базой данных.
-        full_name (str): Название репозитория.
-        owner (str): Владелец репозитория.
-        stars (int): Количество звезд у репозитория.
-        watchers (int): Количество наблюдателей за репозиторием.
-        forks (int): Количество форков репозитория.
-        open_issues (int): Количество открытых проблем у репозитория.
-        language (str): Язык программирования репозитория.
+        db_connection: connection - Соединение с базой данных.
+        full_name: str - Название репозитория.
+        owner: str - Владелец репозитория.
+        stars: int - Количество звезд у репозитория.
+        watchers: int - Количество наблюдателей за репозиторием.
+        forks: int - Количество форков репозитория.
+        open_issues: int - Количество открытых проблем у репозитория.
+        language: str - Язык программирования репозитория.
     """
 
-    async with db_connection.transaction():
-        await db_connection.execute(
-            """
-            INSERT INTO repositories (repo, owner, stars, watchers, forks, open_issues, language)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (repo) DO UPDATE
-            SET
-                owner = EXCLUDED.owner,
-                stars = EXCLUDED.stars,
-                watchers = EXCLUDED.watchers,
-                forks = EXCLUDED.forks,
-                open_issues = EXCLUDED.open_issues,
-                language = EXCLUDED.language
-            """,
-            full_name,
-            owner,
-            stars,
-            watchers,
-            forks,
-            open_issues,
-            language,
-        )
+    with db_connection:
+        with db_connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO repositories (
+                repo, owner, stars, watchers, forks, open_issues, language
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (repo) DO UPDATE
+                SET
+                    owner = EXCLUDED.owner,
+                    stars = EXCLUDED.stars,
+                    watchers = EXCLUDED.watchers,
+                    forks = EXCLUDED.forks,
+                    open_issues = EXCLUDED.open_issues,
+                    language = EXCLUDED.language
+                """,
+                (
+                    full_name,
+                    owner,
+                    stars,
+                    watchers,
+                    forks,
+                    open_issues,
+                    language,
+                ),
+            )
 
 
-async def update_positions(db_connection: Connection):
+def update_positions(db_connection: connection):
     """
     Функция для обновления позиций репозиториев в БД на основе stars.
 
     Args:
-        db_connection (Connection): Соединение с БД.
+        db_connection - Соединение с БД.
     """
-
-    sorted_repositories = await db_connection.fetch(
-        """
-        SELECT * FROM repositories ORDER BY stars DESC LIMIT 100
-        """
-    )
-
-    position_curr = 1
-    for repository in sorted_repositories:
-        repo_id = repository["id"]
-        position_prev = repository["position_cur"]
-        if position_prev is None:
-            position_prev = position_curr
-            await db_connection.execute(
+    with db_connection:
+        with db_connection.cursor() as cursor:
+            cursor.execute(
                 """
-                UPDATE repositories
-                SET position_cur = $1, position_prev = $2
-                WHERE id = $3
-                """,
-                position_curr,
-                position_prev,
-                repo_id,
-            )
-        else:
-            await db_connection.execute(
+                SELECT * FROM repositories ORDER BY stars DESC LIMIT 100
                 """
-                UPDATE repositories
-                SET position_cur = $1, position_prev = $2
-                WHERE id = $3
-                """,
-                position_curr,
-                position_prev,
-                repo_id,
             )
-        position_curr += 1
+            position_curr = 1
+            for repository in (
+                Repository(*repo) for repo in cursor.fetchall()
+            ):
+                repo_id = repository.id
+                position_prev = repository.position_cur
+                if position_prev is None:
+                    position_prev = position_curr
+                cursor.execute(
+                    """
+                    UPDATE repositories
+                    SET position_cur = %s, position_prev = %s
+                    WHERE id = %s
+                    """,
+                    (position_curr, position_prev, repo_id),
+                )
+                position_curr += 1
 
 
-async def parse_repositories_info(
-    repositories: list[dict], db_connection: Connection, session: ClientSession
+def parse_repositories_info(
+    repositories: list[dict], db_connection: connection
 ):
     """
     Парсинг информации о репозиториях и сохранение в БД.
 
     Args:
         repositories: list[dict] - Информация о репозиториях.
-        db_connection: Connection - Соединение с БД.
-        session: ClientSession - Сессия для отправки HTTP-запросов.
+        db_connection: connection - Соединение с БД.
     """
 
     for repository in repositories:
         try:
             owner = repository.get("owner", {}).get("login")
-            result = await request_detail(
-                owner, repository.get("name"), session
-            )
+            result = request_detail(owner, repository.get("name"))
 
             if result.get("full_name") and result.get("stars"):
-                await add_repository_to_database(
+                add_repository_to_database(
                     db_connection=db_connection, owner=owner, **result
                 )
             else:
                 logging.warning(
-                    "Репозиторий пропущен, так как отсутсвуют поля repo или stars"
+                    "Репозиторий пропущен, так как отсутсвуют repo или stars."
                 )
         except Exception as e:
-            logging.warning("Репозиторий пропущен. Возникла ошибка")
+            logging.warning(
+                "Репозиторий пропущен. Возникла ошибка {}".format(e)
+            )
 
 
-async def main(event, context):
-    url = "https://api.github.com/repositories?since={repo_id}".format(
-        repo_id=random.randint(1, 10**6)
+def main(event, context):
+    url = (
+        f"https://api.github.com/repositories?since={random.randint(1, 10**6)}"
     )
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "Authorization": f"token {os.getenv('TOKEN')}",
     }
+
     try:
-        db_connection = await create_connection()
-    except asyncpg.PostgresConnectionError:
+        pool = create_pool()
+        db_connection = pool.getconn()
+    except psycopg2.Error:
         return {
             "statusCode": HTTPStatus.INTERNAL_SERVER_ERROR,
             "body": "Ошибка подключения к базе",
         }
 
     try:
-        async with ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                await parse_repositories_info(
-                    await response.json(), db_connection, session
-                )
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        parse_repositories_info(response.json(), db_connection)
     except Exception as e:
         logging.exception(e)
 
-    await update_positions(db_connection)
-    await db_connection.close()
+    update_positions(db_connection)
+    pool.closeall()
     return {
         "statusCode": HTTPStatus.OK,
         "body": "Данные успешно сохранены в базу!",
