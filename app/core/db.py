@@ -1,14 +1,14 @@
 import asyncpg
 from asyncpg import Pool
 
-from app.core.config import settings
+from app.core.config import config
 
 
 async def create_connection_pool() -> Pool:
     return await asyncpg.create_pool(
-        user=settings.db_user,
-        password=settings.db_password,
-        database=settings.db_name,
+        user=config.db_user,
+        password=config.db_password,
+        database=config.db_name,
         host="db",
     )
 

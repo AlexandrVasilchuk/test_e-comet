@@ -4,7 +4,8 @@ from typing import Optional
 from asyncpg.connection import Connection
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.services import GITHUB_ERROR, get_repository_activity
+from app.services import (GITHUB_ERROR, get_repository_activity,
+                          get_repositories_by_field)
 from app.core.db import get_db_async_connection
 from app.schemas.activity import RepositoryActivity
 from app.schemas.repository import RepositoryDB
@@ -24,20 +25,7 @@ async def get_top_repositories(
     ),
     connection: Connection = Depends(get_db_async_connection),
 ):
-    rows = await connection.fetch(
-        f"""
-        SELECT *
-        FROM repositories
-        ORDER BY {sort_by} {order.upper()}
-        LIMIT 100
-        """
-    )
-    return [
-        RepositoryDB(
-            **{key: value for key, value in row.items() if key != "id"}
-        )
-        for row in rows
-    ]
+    return await get_repositories_by_field(sort_by, order, connection)
 
 
 @router.get(
