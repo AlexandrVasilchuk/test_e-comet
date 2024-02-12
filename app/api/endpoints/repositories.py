@@ -4,11 +4,14 @@ from typing import Optional
 from asyncpg.connection import Connection
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.services import (GITHUB_ERROR, get_repository_activity,
-                          get_repositories_by_field)
 from app.core.db import get_db_async_connection
 from app.schemas.activity import RepositoryActivity
 from app.schemas.repository import RepositoryDB
+from app.services import (
+    GITHUB_ERROR,
+    get_repositories_by_field,
+    get_repository_activity,
+)
 
 router = APIRouter()
 
