@@ -188,7 +188,7 @@ async def main(event, context):
         async with ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 repositories = await response.json()
-                for repository in repositories[:MAX_CONNECTIONS]:
+                for repository in repositories:
                     owner = repository.get("owner", {}).get("login")
                     repo = repository.get("name")
                     tasks.append(
