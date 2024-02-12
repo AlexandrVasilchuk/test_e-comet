@@ -7,6 +7,7 @@ from aiohttp import ClientSession
 from fastapi import HTTPException
 
 from app.schemas.activity import RepositoryActivity
+from app.schemas.repository import RepositoryDB
 
 GITHUB_ERROR = "Ошибка со стороны GitHub API. Подробнее {}"
 
@@ -61,3 +62,20 @@ async def fetch_commits(
                 status_code=response.status, detail=GITHUB_ERROR
             )
         return await response.json()
+
+
+async def get_repositories_by_field(sort_by: str, order: str, connection):
+    rows = await connection.fetch(
+        f"""
+        SELECT *
+        FROM repositories
+        ORDER BY {sort_by} {order.upper()}
+        LIMIT 100
+        """
+    )
+    return [
+        RepositoryDB(
+            **{key: value for key, value in row.items() if key != "id"}
+        )
+        for row in rows
+    ]
